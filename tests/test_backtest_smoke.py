@@ -1,9 +1,14 @@
-import pandas as pd
+# tests/test_backtest_smoke.py
 import numpy as np
+import pandas as pd
+import yaml
+from pathlib import Path
+
 from src.backtest.run_backtest import run
 
-def test_smoke(tmp_path):
-    # Minimal config
+
+def test_smoke(tmp_path: Path):
+    # --- Minimal config ---
     cfg = {
         "symbols": ["BTC/USDT"],
         "timeframe": "1h",
@@ -17,23 +22,39 @@ def test_smoke(tmp_path):
                 "fast_windows": [10],
                 "slow_windows": [30],
                 "sl_stop_pct": 0.02,
-                "tp_stop_pct": 0.04
+                "tp_stop_pct": 0.04,
             },
             "bb_meanrev": {
                 "window_list": [20],
                 "k_list": [2.0],
                 "sl_stop_pct": 0.015,
-                "tp_stop_pct": 0.02
-            }
-        }
+                "tp_stop_pct": 0.02,
+            },
+        },
     }
-    # Fake data
-    df = pd.DataFrame({
-        "datetime": pd.date_range("2020-01-01", periods=100, freq="H"),
-        "close": np.random.rand(100) * 100 + 1000
-    }).set_index("datetime")
+
+    # --- Fake data (ساخت دیتای تست) ---
+    # FutureWarningِ فرکانس را با استفاده از 'h' حل می‌کنیم
+    df = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2020-01-01", periods=100, freq="h"),
+            "close": np.random.rand(100) * 100 + 1000,
+        }
+    ).set_index("datetime")
+
+    # ذخیرهٔ داده در tmp و کپی به مسیر مورد انتظار کد
     data_path = tmp_path / "BTC-USDT_1h.csv"
     df.to_csv(data_path)
-    import shutil
-    shutil.copy(str(data_path), "data/raw/BTC-USDT_1h.csv")
-    run(str(tmp_path / "cfg.yaml"), "ema_cross", tmp_path)
+    Path("data/raw").mkdir(parents=True, exist_ok=True)
+    (Path("data/raw") / "BTC-USDT_1h.csv").write_text(data_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # --- نوشتن فایل کانفیگ در tmp_path ---
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    # --- اجرای بک‌تست دود (Smoke) ---
+    outdir = run(str(cfg_path), "ema_cross", tmp_path)
+
+    # بررسی خروجی‌های کلیدی
+    assert (outdir / "grid_results.csv").exists()
+    assert (outdir / "report.html").exists()
