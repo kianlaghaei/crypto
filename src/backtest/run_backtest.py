@@ -18,12 +18,12 @@ STRATEGY_BUILDERS = {
 
 
 def run(cfg_path: str, strategy: str, outdir: str | Path):
-    raw_cfg: dict = load_yaml(cfg_path)
     try:
+        raw_cfg: dict = load_yaml(cfg_path)
         cfg: Config = Config.model_validate(raw_cfg)
     except Exception as e:
         logger.error(f"Config validation failed: {e}")
-        exit(1)
+        raise
     import itertools
     results = []
     for sym in cfg["symbols"]:
@@ -35,13 +35,39 @@ def run(cfg_path: str, strategy: str, outdir: str | Path):
         df = pd.read_csv(data_path, parse_dates=["datetime"]).set_index("datetime")
         close = df["close"].astype(float)
         s_cfg = cfg["strategies"][strategy]
+        daily_loss_limit = cfg.get("daily_loss_limit_pct", 0.02)
+        max_trades_per_day = cfg.get("max_trades_per_day", 20)
         # Grid search
         if strategy == "ema_cross":
             grid = itertools.product(s_cfg["fast_windows"], s_cfg["slow_windows"], [s_cfg.get("sl_stop_pct", 0.02)], [s_cfg.get("tp_stop_pct", 0.04)])
             for fast, slow, sl, tp in grid:
                 entries, exits = STRATEGY_BUILDERS[strategy](close, [fast], [slow])
+                # Apply constraints
+                entries_masked = entries.copy()
+                # Daily loss and max trades constraints
+                trade_dates = entries_masked.index.date
+                trade_count = {}
+                daily_loss = {}
+                cash = cfg["init_cash"]
+                blocked = set()
+                for idx in entries_masked.index:
+                    d = idx.date()
+                    if d not in trade_count:
+                        trade_count[d] = 0
+                        daily_loss[d] = 0.0
+                    if trade_count[d] >= max_trades_per_day or d in blocked:
+                        entries_masked.loc[idx] = False
+                        continue
+                    if entries_masked.loc[idx]:
+                        trade_count[d] += 1
+                        # Simulate a trade for loss (approx)
+                        # For simplicity, assume 1% loss per trade
+                        daily_loss[d] += -0.01 * cash
+                        if abs(daily_loss[d]) > daily_loss_limit * cash:
+                            blocked.add(d)
+                            entries_masked.loc[idx] = False
                 pf = vbt.Portfolio.from_signals(
-                    close, entries, exits,
+                    close, entries_masked, exits,
                     fees=cfg["fees_bps"] / 1e4,
                     slippage=cfg["slippage_bps"] / 1e4,
                     sl_stop=sl,
@@ -59,13 +85,36 @@ def run(cfg_path: str, strategy: str, outdir: str | Path):
                     "sharpe": stats.get("Sharpe Ratio", 0),
                     "winrate": stats.get("Win Rate [%]", 0),
                     "profit_factor": stats.get("Profit Factor", 0),
+                    "daily_loss_limit_pct": daily_loss_limit,
+                    "max_trades_per_day": max_trades_per_day,
                 })
         elif strategy == "bb_meanrev":
             grid = itertools.product(s_cfg["window_list"], s_cfg["k_list"], [s_cfg.get("sl_stop_pct", 0.015)], [s_cfg.get("tp_stop_pct", 0.02)])
             for window, k, sl, tp in grid:
                 entries, exits = STRATEGY_BUILDERS[strategy](close, [window], [k])
+                # Apply constraints
+                entries_masked = entries.copy()
+                trade_dates = entries_masked.index.date
+                trade_count = {}
+                daily_loss = {}
+                cash = cfg["init_cash"]
+                blocked = set()
+                for idx in entries_masked.index:
+                    d = idx.date()
+                    if d not in trade_count:
+                        trade_count[d] = 0
+                        daily_loss[d] = 0.0
+                    if trade_count[d] >= max_trades_per_day or d in blocked:
+                        entries_masked.loc[idx] = False
+                        continue
+                    if entries_masked.loc[idx]:
+                        trade_count[d] += 1
+                        daily_loss[d] += -0.01 * cash
+                        if abs(daily_loss[d]) > daily_loss_limit * cash:
+                            blocked.add(d)
+                            entries_masked.loc[idx] = False
                 pf = vbt.Portfolio.from_signals(
-                    close, entries, exits,
+                    close, entries_masked, exits,
                     fees=cfg["fees_bps"] / 1e4,
                     slippage=cfg["slippage_bps"] / 1e4,
                     sl_stop=sl,
@@ -83,12 +132,33 @@ def run(cfg_path: str, strategy: str, outdir: str | Path):
                     "sharpe": stats.get("Sharpe Ratio", 0),
                     "winrate": stats.get("Win Rate [%]", 0),
                     "profit_factor": stats.get("Profit Factor", 0),
+                    "daily_loss_limit_pct": daily_loss_limit,
+                    "max_trades_per_day": max_trades_per_day,
                 })
         else:
             raise ValueError("Unknown strategy")
     # Save grid results
-    outdir = Path(outdir) / f"{strategy}_grid_{cfg["timeframe"]}"
+    from datetime import datetime
+    import json
+    run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    outdir = Path(outdir) / f"{strategy}_grid_{cfg["timeframe"]}_{run_id}"
     outdir.mkdir(parents=True, exist_ok=True)
+    # Save params.json
+    try:
+        import pkg_resources
+        versions = {p.key: p.version for p in pkg_resources.working_set}
+    except Exception:
+        versions = {}
+    params = {
+        "run_id": run_id,
+        "strategy": strategy,
+        "symbols": cfg["symbols"],
+        "timeframe": cfg["timeframe"],
+        "config": raw_cfg,
+        "package_versions": versions,
+    }
+    with open(outdir / "params.json", "w", encoding="utf-8") as f:
+        json.dump(params, f, indent=2, ensure_ascii=False)
     df_results = pd.DataFrame(results)
     df_results.to_csv(outdir / "grid_results.csv", index=False)
     logger.info(f"Saved grid results to {outdir / 'grid_results.csv'}")
@@ -114,6 +184,8 @@ def run(cfg_path: str, strategy: str, outdir: str | Path):
     <pre>{best_row.to_dict() if best_row is not None else 'No results'}</pre>
     <h2>Equity Chart</h2>
     {svg_data}
+    <h3>Note</h3>
+    <p>If a candle hits both SL and TP, the engine assumes SL is triggered first (pessimistic same-bar policy).</p>
     </body></html>
     """
     with open(outdir / "report.html", "w", encoding="utf-8") as f:

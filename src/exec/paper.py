@@ -22,18 +22,30 @@ def main():
     ex.load_markets()
 
     cash = cfg.init_cash
-    daily_loss = 0
     trades = []
-    for i, row in df.iterrows():
-        # Simulate trade
-        price = row['close']
-        pnl = (row.get('side', 1) * (row.get('exit_price', price) - price)) - cfg.fees_bps/1e4 * price
+    daily_loss = 0
+    last_day = None
+    block_trading = False
+    for row in df.itertuples():
+        ts = getattr(row, 'timestamp', None)
+        dt = pd.to_datetime(ts, unit='ms', utc=True)
+        day = dt.date()
+        if last_day is None or day != last_day:
+            daily_loss = 0
+            block_trading = False
+            last_day = day
+        if block_trading:
+            continue
+        price = getattr(row, 'close', None)
+        side = getattr(row, 'side', 1)
+        exit_price = getattr(row, 'exit_price', price)
+        pnl = (side * (exit_price - price)) - cfg.fees_bps/1e4 * price
         cash += pnl
-        trades.append({'ts': row['timestamp'], 'price': price, 'pnl': pnl})
+        trades.append({'ts': ts, 'price': price, 'pnl': pnl, 'day': str(day)})
         daily_loss += min(0, pnl)
         if abs(daily_loss) > args.max_daily_loss * cfg.init_cash:
-            logger.warning('Daily loss limit hit, stopping simulation.')
-            break
+            logger.warning(f'Daily loss limit hit for {day}, blocking further trades until next day.')
+            block_trading = True
     # Log summary
     logger.info(f'Trades: {len(trades)}, Final PnL: {cash-cfg.init_cash:.2f}')
     with open('logs/paper_run.jsonl', 'w') as f:

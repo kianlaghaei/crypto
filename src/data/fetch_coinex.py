@@ -41,12 +41,12 @@ def main():
     ap.add_argument("--outdir", default="data/raw")
     args = ap.parse_args()
 
-    raw_cfg = load_yaml(args.cfg)
     try:
+        raw_cfg = load_yaml(args.cfg)
         cfg = Config.model_validate(raw_cfg)
     except Exception as e:
         logger.error(f"Config validation failed: {e}")
-        exit(1)
+        raise
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +88,24 @@ def main():
         df = pd.DataFrame(rows, columns=["timestamp","open","high","low","close","volume"])
         df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df.set_index("datetime", inplace=True)
+        # Integrity checks
+        bad_high_low = (df["high"] < df["low"]).sum()
+        bad_volume = (df["volume"] < 0).sum()
+        nan_count = df[["open","high","low","close","volume"]].isna().sum().sum()
+        if bad_high_low > 0:
+            logger.warning(f"{bad_high_low} rows with high < low")
+        if bad_volume > 0:
+            logger.warning(f"{bad_volume} rows with negative volume")
+        if nan_count > 0:
+            logger.warning(f"{nan_count} NaN values in OHLCV columns")
+        # Time gap reporting
+        ts_sorted = df["timestamp"].sort_values()
+        gaps = (ts_sorted.diff() > 2 * (ts_sorted.diff().median())).sum()
+        if gaps > 0:
+            logger.warning(f"{gaps} time gaps detected in data")
+        # Downcast
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], downcast="float")
         # Dedup and append to parquet
         if pq_path.exists():
             try:
@@ -95,7 +113,7 @@ def main():
                 df = pd.concat([prev_df, df]).drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
             except Exception as e:
                 logger.warning(f"Failed to merge with existing parquet: {e}")
-        df.to_parquet(pq_path)
+        df.to_parquet(pq_path, compression="zstd")
         logger.info(f"Saved {len(df):,} rows → {pq_path}")
 
 if __name__ == "__main__":

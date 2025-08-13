@@ -7,6 +7,9 @@ fees_bps: 10       # 0.10% taker per side
 slippage_bps: 2    # 0.02% per trade (simple model)
 init_cash: 8000
 
+daily_loss_limit_pct: 0.02  # max daily loss (fraction of init_cash)
+max_trades_per_day: 20      # max trades per day
+
 strategies:
   ema_cross:
     fast_windows: [10, 20, 30]
