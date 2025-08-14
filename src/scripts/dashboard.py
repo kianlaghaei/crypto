@@ -19,7 +19,8 @@ import vectorbt as vbt
 # -----------------------------------------------------------
 # Configs
 # -----------------------------------------------------------
-BACKTEST_ROOT = Path("out/backtests").resolve()
+# Resolve repository root so dashboard works regardless of working directory
+BACKTEST_ROOT = Path(__file__).resolve().parents[2] / "out" / "backtests"
 
 
 # -----------------------------------------------------------
