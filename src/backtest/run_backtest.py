@@ -245,6 +245,7 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
         eq = best_by_sharpe["pf"].value()
         fig = eq.plot(title=f"Best Equity — {best_by_sharpe['label']} ({best_by_sharpe['sym']} {cfg.timeframe})")
         fig.figure.savefig(outdir / "best_equity.png", dpi=150, bbox_inches="tight")
+        best_by_sharpe["pf"].save(outdir / "best_portfolio.pkl")
 
     logger.info(f"Saved grid results & report → {outdir}")
     return outdir
