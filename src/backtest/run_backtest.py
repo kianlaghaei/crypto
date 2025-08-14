@@ -13,8 +13,6 @@ from loguru import logger
 
 from src.utils.io import load_yaml
 from src.utils.config import Config
-from src.strategies.ema_cross import build_signals_ema_cross
-from src.strategies.bb_meanrev import build_signals_bb_meanrev
 
 
 # ---------- helpers ----------
@@ -83,7 +81,9 @@ def load_price(sym: str, timeframe: str) -> pd.Series:
     elif csv_path.exists():
         df = pd.read_csv(csv_path, parse_dates=["datetime"]).set_index("datetime")
     else:
-        raise FileNotFoundError(f"Missing data for {sym} {timeframe}. Run fetch_coinex.py first.")
+        raise FileNotFoundError(
+            f"Missing data for {sym} {timeframe}. Run fetch_coinex.py first."
+        )
 
     return df["close"].astype(float)
 
@@ -94,7 +94,8 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
     cfg: Config = Config.model_validate(raw_cfg)
 
     # structured logs
-    logdir = Path("logs"); logdir.mkdir(parents=True, exist_ok=True)
+    logdir = Path("logs")
+    logdir.mkdir(parents=True, exist_ok=True)
     log_path = logdir / f"bt_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.jsonl"
     logger.add(log_path, serialize=True, level="INFO", enqueue=True)
 
@@ -112,13 +113,14 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
         fees = cfg.fees_bps / 1e4
         slip = cfg.slippage_bps / 1e4
         init_cash = float(cfg.init_cash)
+        max_tpd = cfg.max_trades_per_day
 
         if strategy == "ema_cross":
             s = cfg.strategies.ema_cross
             fast_ws = list(s.fast_windows)
             slow_ws = list(s.slow_windows)
-            sl = float(s.sl_stop_pct); tp = float(s.tp_stop_pct)
-            max_tpd = getattr(s, "max_trades_per_day", None)
+            sl = float(s.sl_stop_pct)
+            tp = float(s.tp_stop_pct)
 
             # برای هر ترکیب جداگانه سیگنال و بک‌تست بساز؛ پایدار برای هر شکل گرید
             for fwin in fast_ws:
@@ -134,30 +136,44 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
 
                     # پورتفوی
                     pf = vbt.Portfolio.from_signals(
-                        close, entries, exits,
-                        fees=fees, slippage=slip,
-                        sl_stop=sl, tp_stop=tp,
-                        init_cash=init_cash, freq=timeframe,
+                        close,
+                        entries,
+                        exits,
+                        fees=fees,
+                        slippage=slip,
+                        sl_stop=sl,
+                        tp_stop=tp,
+                        init_cash=init_cash,
+                        freq=timeframe,
                     )
 
                     k = kpis_scalar(pf)
-                    results_rows.append({
-                        "symbol": sym,
-                        "strategy": "ema_cross",
-                        "params": f"fast={fwin},slow={swin},sl={sl},tp={tp}",
-                        **k,
-                    })
+                    results_rows.append(
+                        {
+                            "symbol": sym,
+                            "strategy": "ema_cross",
+                            "params": f"fast={fwin},slow={swin},sl={sl},tp={tp}",
+                            **k,
+                        }
+                    )
 
-                    if np.isfinite(k["sharpe"]) and k["sharpe"] > best_by_sharpe["sharpe"]:
-                        best_by_sharpe = {"sharpe": k["sharpe"], "pf": pf, "sym": sym,
-                                          "label": f"EMA fast={fwin} slow={swin}"}
+                    if (
+                        np.isfinite(k["sharpe"])
+                        and k["sharpe"] > best_by_sharpe["sharpe"]
+                    ):
+                        best_by_sharpe = {
+                            "sharpe": k["sharpe"],
+                            "pf": pf,
+                            "sym": sym,
+                            "label": f"EMA fast={fwin} slow={swin}",
+                        }
 
         elif strategy == "bb_meanrev":
             s = cfg.strategies.bb_meanrev
             ws = list(s.window_list)
             ks = list(s.k_list)
-            sl = float(s.sl_stop_pct); tp = float(s.tp_stop_pct)
-            max_tpd = getattr(s, "max_trades_per_day", None)
+            sl = float(s.sl_stop_pct)
+            tp = float(s.tp_stop_pct)
 
             for win in ws:
                 for kval in ks:
@@ -168,23 +184,37 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
                     entries = apply_max_trades_per_day(entries, close, max_tpd)
 
                     pf = vbt.Portfolio.from_signals(
-                        close, entries, exits,
-                        fees=fees, slippage=slip,
-                        sl_stop=sl, tp_stop=tp,
-                        init_cash=init_cash, freq=timeframe,
+                        close,
+                        entries,
+                        exits,
+                        fees=fees,
+                        slippage=slip,
+                        sl_stop=sl,
+                        tp_stop=tp,
+                        init_cash=init_cash,
+                        freq=timeframe,
                     )
 
                     k = kpis_scalar(pf)
-                    results_rows.append({
-                        "symbol": sym,
-                        "strategy": "bb_meanrev",
-                        "params": f"window={win},k={kval},sl={sl},tp={tp}",
-                        **k,
-                    })
+                    results_rows.append(
+                        {
+                            "symbol": sym,
+                            "strategy": "bb_meanrev",
+                            "params": f"window={win},k={kval},sl={sl},tp={tp}",
+                            **k,
+                        }
+                    )
 
-                    if np.isfinite(k["sharpe"]) and k["sharpe"] > best_by_sharpe["sharpe"]:
-                        best_by_sharpe = {"sharpe": k["sharpe"], "pf": pf, "sym": sym,
-                                          "label": f"BB win={win} k={kval}"}
+                    if (
+                        np.isfinite(k["sharpe"])
+                        and k["sharpe"] > best_by_sharpe["sharpe"]
+                    ):
+                        best_by_sharpe = {
+                            "sharpe": k["sharpe"],
+                            "pf": pf,
+                            "sym": sym,
+                            "label": f"BB win={win} k={kval}",
+                        }
         else:
             raise ValueError("Unknown strategy")
 
@@ -199,6 +229,7 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
     # params.json
     try:
         import importlib.metadata as imd
+
         versions = {p: imd.version(p) for p in ["vectorbt", "pandas", "numpy", "numba"]}
     except Exception:
         versions = {}
@@ -220,7 +251,8 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
         df_results["total_return"].plot(ax=ax)
         ax.set_title("Total Return across Grid")
         buf = io.BytesIO()
-        plt.savefig(buf, format="svg", bbox_inches="tight"); buf.seek(0)
+        plt.savefig(buf, format="svg", bbox_inches="tight")
+        buf.seek(0)
         svg_data = buf.getvalue().decode()
     else:
         best_row = None
@@ -243,7 +275,9 @@ def run(cfg_path: str, strategy: str, outdir: str | Path) -> Path:
     # Save best equity chart if available
     if best_by_sharpe["pf"] is not None:
         eq = best_by_sharpe["pf"].value()
-        fig = eq.plot(title=f"Best Equity — {best_by_sharpe['label']} ({best_by_sharpe['sym']} {cfg.timeframe})")
+        fig = eq.plot(
+            title=f"Best Equity — {best_by_sharpe['label']} ({best_by_sharpe['sym']} {cfg.timeframe})"
+        )
         fig.figure.savefig(outdir / "best_equity.png", dpi=150, bbox_inches="tight")
         best_by_sharpe["pf"].save(outdir / "best_portfolio.pkl")
 

@@ -2,7 +2,7 @@
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Literal
 
 import pandas as pd
 from loguru import logger
@@ -15,7 +15,7 @@ from src.utils.config import Config
 class Trade:
     dt: pd.Timestamp
     day: str
-    side: Literal[1, -1]            # 1=long, -1=short (اگر short نداری همیشه 1)
+    side: Literal[1, -1]  # 1=long, -1=short (اگر short نداری همیشه 1)
     entry_price: float
     exit_price: float
     qty: float
@@ -28,7 +28,9 @@ class Trade:
 def _ensure_logs():
     logdir = Path("logs")
     logdir.mkdir(parents=True, exist_ok=True)
-    logger.add(logdir / "paper_{time}.jsonl", serialize=True, level="INFO", enqueue=True)
+    logger.add(
+        logdir / "paper_{time}.jsonl", serialize=True, level="INFO", enqueue=True
+    )
     return logdir
 
 
@@ -55,7 +57,9 @@ def _read_signals_csv(path: str | Path) -> pd.DataFrame:
     if {"side", "price", "exit_price"}.issubset(df.columns):
         # حالت B
         out = pd.DataFrame(index=df.index)
-        out["side"] = df["side"].astype(int).clip(-1, 1).replace(0, 1)  # اگر 0 بود، 1 بگیر
+        out["side"] = (
+            df["side"].astype(int).clip(-1, 1).replace(0, 1)
+        )  # اگر 0 بود، 1 بگیر
         out["entry_price"] = df["price"].astype(float)
         out["exit_price"] = df["exit_price"].astype(float)
         return out
@@ -67,15 +71,21 @@ def _read_signals_csv(path: str | Path) -> pd.DataFrame:
         out["side"] = (df["entry"] > 0).astype(int)  # فقط Long
         out["entry_price"] = df["close"].astype(float)
         # اگر exit == True در همان کندل، از همان close به عنوان خروج استفاده می‌کنیم
-        out["exit_price"] = out["entry_price"].where(df["exit"] > 0, other=out["entry_price"])
+        out["exit_price"] = out["entry_price"].where(
+            df["exit"] > 0, other=out["entry_price"]
+        )
         # فقط ردیف‌هایی که entry==True هستند را نگه داریم
         out = out[out["side"] == 1]
         return out
 
-    raise ValueError("Unknown signals schema. Provide either (side, price, exit_price) or (entry, exit, close).")
+    raise ValueError(
+        "Unknown signals schema. Provide either (side, price, exit_price) or (entry, exit, close)."
+    )
 
 
-def _apply_daily_loss_guard(trades_df: pd.DataFrame, init_cash: float, daily_loss_limit_pct: Optional[float]) -> pd.DataFrame:
+def _apply_daily_loss_guard(
+    trades_df: pd.DataFrame, init_cash: float, daily_loss_limit_pct: float | None
+) -> pd.DataFrame:
     """
     ماسک‌کردن معاملات پس از برخورد با سقف ضرر روزانه:
     - trades_df باید شامل net_pnl و index زمانی باشد.
@@ -85,11 +95,15 @@ def _apply_daily_loss_guard(trades_df: pd.DataFrame, init_cash: float, daily_los
         return trades_df
 
     day = trades_df.index.tz_convert("UTC").normalize()
-    daily_cum_loss = trades_df["net_pnl"].where(trades_df["net_pnl"] < 0, 0).groupby(day).cumsum()
+    daily_cum_loss = (
+        trades_df["net_pnl"].where(trades_df["net_pnl"] < 0, 0).groupby(day).cumsum()
+    )
     limit = -abs(daily_loss_limit_pct) * init_cash
 
     # مجاز: تا زمانی که مجموع زیان روزانه > limit نشده
-    allowed = daily_cum_loss >= limit  # چون هر دو منفی‌اند، «بزرگ‌تر مساوی» یعنی هنوز نگذشته
+    allowed = (
+        daily_cum_loss >= limit
+    )  # چون هر دو منفی‌اند، «بزرگ‌تر مساوی» یعنی هنوز نگذشته
     # وقتی از حد گذشت، باقی معاملات همان روز حذف شوند:
     # اجازه بده اولین عبور ثبت شود، بقیه‌ی همان روز False
     # تبدیل allowed به ماسکی که بعد از اولین False همان روز، همه False شود
@@ -112,11 +126,20 @@ def _apply_daily_loss_guard(trades_df: pd.DataFrame, init_cash: float, daily_los
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Simple paper trading simulator on precomputed signals")
+    ap = argparse.ArgumentParser(
+        description="Simple paper trading simulator on precomputed signals"
+    )
     ap.add_argument("--signals", required=True, help="Path to signals CSV")
     ap.add_argument("--cfg", required=True, help="Path to config.yaml")
-    ap.add_argument("--qty", type=float, default=1.0, help="Position size per trade (units)")
-    ap.add_argument("--daily_loss_limit_pct", type=float, default=None, help="Stop trading for the day after this % loss of init cash")
+    ap.add_argument(
+        "--qty", type=float, default=1.0, help="Position size per trade (units)"
+    )
+    ap.add_argument(
+        "--daily_loss_limit_pct",
+        type=float,
+        default=None,
+        help="Stop trading for the day after this % loss of init cash",
+    )
     args = ap.parse_args()
 
     logdir = _ensure_logs()
@@ -136,8 +159,8 @@ def main():
     # اگر side=1 (long)، قیمت ورود = entry_price*(1+slip)، خروج = exit_price*(1 - slip)
     # اگر side=-1 (short)، برعکس
     side = sig["side"].astype(int).clip(-1, 1).replace(0, 1)
-    entry_exec = sig["entry_price"] * (1 + slip * side)       # long: +slip, short: -slip
-    exit_exec = sig["exit_price"] * (1 - slip * side)         # long: -slip, short: +slip
+    entry_exec = sig["entry_price"] * (1 + slip * side)  # long: +slip, short: -slip
+    exit_exec = sig["exit_price"] * (1 - slip * side)  # long: -slip, short: +slip
 
     qty = float(args.qty)
     gross_pnl = (exit_exec - entry_exec) * side * qty
@@ -159,7 +182,14 @@ def main():
     )
 
     # اعمال سقف ضرر روزانه (اختیاری)
-    trades_df = _apply_daily_loss_guard(trades_df, float(cfg.init_cash), args.daily_loss_limit_pct)
+    daily_loss_limit = (
+        args.daily_loss_limit_pct
+        if args.daily_loss_limit_pct is not None
+        else cfg.daily_loss_limit_pct
+    )
+    trades_df = _apply_daily_loss_guard(
+        trades_df, float(cfg.init_cash), daily_loss_limit
+    )
 
     # شبیه‌سازی cash
     cash = float(cfg.init_cash)
@@ -174,7 +204,9 @@ def main():
 
     # ذخیره CSV معاملات
     trades_csv = outdir / "trades.csv"
-    trades_df.reset_index().rename(columns={"index": "datetime"}).to_csv(trades_csv, index=False)
+    trades_df.reset_index().rename(columns={"index": "datetime"}).to_csv(
+        trades_csv, index=False
+    )
 
     # خلاصه
     total_trades = len(trades_df)
@@ -193,7 +225,11 @@ def main():
             "winrate_pct": float(winrate),
             "final_cash": float(cash),
             "signals_path": str(args.signals),
-            "config": {"fees_bps": cfg.fees_bps, "slippage_bps": cfg.slippage_bps, "init_cash": float(cfg.init_cash)},
+            "config": {
+                "fees_bps": cfg.fees_bps,
+                "slippage_bps": cfg.slippage_bps,
+                "init_cash": float(cfg.init_cash),
+            },
         }
     )
 

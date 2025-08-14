@@ -9,16 +9,11 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
-# اگر util داخلی دارید، می‌توانید از آن استفاده کنید؛ برای استقلال، از yaml استفاده می‌کنیم:
-import yaml
-
 from src.engine.event_backtester import EventBacktester
 from src.strategies.event.atr_ema_cross import build_signals_ema_cross
+from src.utils.io import load_yaml
+from src.utils.config import Config
 
-def load_cfg(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
     pq = Path("data/parquet") / f"{symbol.replace('/','-')}_{timeframe}.parquet"
@@ -45,28 +40,34 @@ def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
     keep = needed + (["volume"] if "volume" in df.columns else [])
     return df[keep].astype(float)
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Event-driven backtest (percent SL/TP) from YAML config")
-    ap.add_argument("--cfg", required=True, help="Path to config.yaml (like the snippet you sent)")
+    ap = argparse.ArgumentParser(
+        description="Event-driven backtest (percent SL/TP) from YAML config"
+    )
+    ap.add_argument(
+        "--cfg", required=True, help="Path to config.yaml (like the snippet you sent)"
+    )
     ap.add_argument("--out", default="out/event_backtests", help="Output root folder")
     args = ap.parse_args()
 
-    raw = load_cfg(args.cfg)
+    raw = load_yaml(args.cfg)
+    cfg = Config.model_validate(raw)
 
-    symbols = raw.get("symbols", [])
-    timeframe = raw.get("timeframe", "1h")
-    fees_bps = float(raw.get("fees_bps", 10))
-    slippage_bps = float(raw.get("slippage_bps", 2))
-    init_cash = float(raw.get("init_cash", 8000))
-    daily_loss_limit_pct = raw.get("daily_loss_limit_pct", None)
-    max_trades_per_day = raw.get("max_trades_per_day", None)
+    symbols = cfg.symbols
+    timeframe = cfg.timeframe
+    fees_bps = float(cfg.fees_bps)
+    slippage_bps = float(cfg.slippage_bps)
+    init_cash = float(cfg.init_cash)
+    daily_loss_limit_pct = cfg.daily_loss_limit_pct
+    max_trades_per_day = cfg.max_trades_per_day
     risk_pct = float(raw.get("risk_pct_per_trade", 0.01))  # optional in YAML
 
-    strat_cfg = raw.get("strategies", {}).get("ema_cross", {})
-    fast_list = list(strat_cfg.get("fast_windows", []))
-    slow_list = list(strat_cfg.get("slow_windows", []))
-    sl_stop_pct = float(strat_cfg.get("sl_stop_pct", 0.02))
-    tp_stop_pct = float(strat_cfg.get("tp_stop_pct", 0.04))
+    strat_cfg = cfg.strategies.ema_cross
+    fast_list = list(strat_cfg.fast_windows)
+    slow_list = list(strat_cfg.slow_windows)
+    sl_stop_pct = float(strat_cfg.sl_stop_pct)
+    tp_stop_pct = float(strat_cfg.tp_stop_pct)
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     outdir = Path(args.out) / f"ema_event_grid_{timeframe}_{run_id}"
@@ -132,7 +133,8 @@ def main():
         ax.set_xlabel("Row #")
         ax.set_ylabel("Total Return")
         buf = io.BytesIO()
-        plt.savefig(buf, format="svg", bbox_inches="tight"); buf.seek(0)
+        plt.savefig(buf, format="svg", bbox_inches="tight")
+        buf.seek(0)
         svg = buf.getvalue().decode()
     else:
         best_row = {}
@@ -169,6 +171,7 @@ def main():
     if best["dir"] is not None:
         print(f"Best by Sharpe: {best['row']}")
         print(f"Best outputs folder: {best['dir']}")
+
 
 if __name__ == "__main__":
     main()
