@@ -33,6 +33,7 @@ class Config(BaseModel):
     fees_bps: float = Field(ge=0, le=1000)
     slippage_bps: float = Field(ge=0, le=100)
     init_cash: float = Field(gt=0)
+    risk_pct_per_trade: float = Field(default=0.01, ge=0, le=1.0)
     daily_loss_limit_pct: float | None = Field(default=None, ge=0, le=1.0)
     max_trades_per_day: int | None = Field(default=None, ge=1, le=1000)
     strategies: Strategies
