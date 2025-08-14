@@ -51,8 +51,7 @@ def main():
     ap.add_argument("--out", default="out/event_backtests", help="Output root folder")
     args = ap.parse_args()
 
-    raw = load_yaml(args.cfg)
-    cfg = Config.model_validate(raw)
+    cfg = Config.model_validate(load_yaml(args.cfg))
 
     symbols = cfg.symbols
     timeframe = cfg.timeframe
@@ -61,7 +60,7 @@ def main():
     init_cash = float(cfg.init_cash)
     daily_loss_limit_pct = cfg.daily_loss_limit_pct
     max_trades_per_day = cfg.max_trades_per_day
-    risk_pct = float(raw.get("risk_pct_per_trade", 0.01))  # optional in YAML
+    risk_pct = float(cfg.risk_pct_per_trade)
 
     strat_cfg = cfg.strategies.ema_cross
     fast_list = list(strat_cfg.fast_windows)
@@ -163,7 +162,7 @@ def main():
         "run_id": run_id,
         "timeframe": timeframe,
         "symbols": symbols,
-        "config_used": raw,
+        "config_used": cfg.model_dump(),
     }
     (outdir / "params.json").write_text(json.dumps(params, indent=2), encoding="utf-8")
 
